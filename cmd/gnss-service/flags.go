@@ -13,7 +13,7 @@ var (
 func parseFlags() {
 	flag.StringVar(&flagRunAddr, "a", "localhost:8080", "address and port to run server")
 
-	flag.StringVar(&flagSQL, "d", "", "DB address")
+	flag.StringVar(&flagSQL, "d", "postgres://postgres:1337@localhost:5432/gnssservice?sslmode=disable", "DB address")
 
 	flag.Parse()
 

@@ -1,9 +1,12 @@
 package main
 
 import (
+	"gnss-service/internal/handlers"
 	"gnss-service/internal/storage"
+	"net/http"
 
 	"github.com/go-chi/chi"
+	"github.com/go-chi/chi/middleware"
 	"go.uber.org/zap"
 )
 
@@ -26,13 +29,13 @@ func main() {
 	}
 	defer logger.Sync()
 	sugar := logger.Sugar()
-
+	var dbStorage *storage.DBStorage
 	router := chi.NewRouter()
 
 	if flagSQL != "" {
 		sugar.Infof("Initializing PostrgeSQL storage with DSN: %s", flagSQL)
 
-		dbStorage, err := storage.NewDBStorage(flagSQL)
+		dbStorage, err = storage.NewDBStorage(flagSQL)
 		if err != nil {
 			sugar.Fatalf("Fataled to save metrics on exit: %v", err)
 		}
@@ -42,5 +45,18 @@ func main() {
 			}
 		}()
 	}
+	router.Use(middleware.StripSlashes)
+	router.Use(logMiddleware(sugar))
+	router.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	})
+	router.NotFound(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "Invalid path format", http.StatusNotFound)
+	})
 
+	router.Get("/", handlers.IndexHandler)
+	router.Post("/api/user/register", handlers.RegisterHandler(dbStorage, sugar))
+
+	sugar.Infof("Running server on %s", flagRunAddr)
+	sugar.Fatal(http.ListenAndServe(flagRunAddr, router))
 }
