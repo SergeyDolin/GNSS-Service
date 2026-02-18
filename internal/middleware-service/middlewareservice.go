@@ -69,53 +69,66 @@ func LogMiddleware(logger *zap.SugaredLogger) func(http.Handler) http.Handler {
 }
 
 func AuthMiddleware(dbStorage *storage.DBStorage, logger *zap.SugaredLogger) func(http.Handler) http.Handler {
-	return func(h http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+			w.Header().Set("Pragma", "no-cache")
+			w.Header().Set("Expires", "0")
 
-			authHeader := r.Header.Get("Authorization")
-
-			if authHeader == "" {
+			auth := r.Header.Get("Authorization")
+			if auth == "" {
+				logger.Warn("AuthMiddleware: missing Authorization header")
+				w.Header().Set("WWW-Authenticate", "Basic realm=\"GNSS Service\"")
 				sendJSONError(w, "Unauthorized", http.StatusUnauthorized, logger)
 				return
 			}
 
-			parts := strings.SplitN(authHeader, " ", 2)
+			parts := strings.SplitN(auth, " ", 2)
 			if len(parts) != 2 || strings.ToLower(parts[0]) != "basic" {
-				sendJSONError(w, "Invalid authorization format", http.StatusUnauthorized, logger)
+				logger.Warnf("AuthMiddleware: invalid Authorization format")
+				w.Header().Set("WWW-Authenticate", "Basic realm=\"GNSS Service\"")
+				sendJSONError(w, "Unauthorized", http.StatusUnauthorized, logger)
 				return
 			}
 
 			decoded, err := base64.StdEncoding.DecodeString(parts[1])
-
 			if err != nil {
-				sendJSONError(w, "Invalid credentials", http.StatusUnauthorized, logger)
+				logger.Warnf("AuthMiddleware: failed to decode base64")
+				w.Header().Set("WWW-Authenticate", "Basic realm=\"GNSS Service\"")
+				sendJSONError(w, "Unauthorized", http.StatusUnauthorized, logger)
 				return
 			}
 
-			creds := strings.SplitN(string(decoded), ":", 2)
-			if len(creds) != 2 {
-				sendJSONError(w, "Invalid credentials format", http.StatusUnauthorized, logger)
+			credentials := strings.SplitN(string(decoded), ":", 2)
+			if len(credentials) != 2 {
+				logger.Warnf("AuthMiddleware: invalid credentials format")
+				w.Header().Set("WWW-Authenticate", "Basic realm=\"GNSS Service\"")
+				sendJSONError(w, "Unauthorized", http.StatusUnauthorized, logger)
 				return
 			}
 
-			login, password := creds[0], creds[1]
+			login, password := credentials[0], credentials[1]
 
 			user, err := dbStorage.GetUser(login)
-			if err != nil || user.Password != password {
-				sendJSONError(w, "Invalid credentials", http.StatusUnauthorized, logger)
+			if err != nil {
+				logger.Warnf("AuthMiddleware: user not found: %s", login)
+				w.Header().Set("WWW-Authenticate", "Basic realm=\"GNSS Service\"")
+				sendJSONError(w, "Unauthorized", http.StatusUnauthorized, logger)
 				return
 			}
 
 			err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password))
 			if err != nil {
-				logger.Warnf("Invalid password for user: %s", login)
-				sendJSONError(w, "Unauthorized: invalid credentials", http.StatusUnauthorized, logger)
+				logger.Warnf("AuthMiddleware: password mismatch for user: %s", login)
+				w.Header().Set("WWW-Authenticate", "Basic realm=\"GNSS Service\"")
+				sendJSONError(w, "Unauthorized", http.StatusUnauthorized, logger)
 				return
 			}
 
-			// Добавляем логин в контекст
+			logger.Infof("AuthMiddleware: authentication successful for user: %s", login)
+
 			ctx := context.WithValue(r.Context(), UserLoginKey, login)
-			h.ServeHTTP(w, r.WithContext(ctx))
+			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }

@@ -37,7 +37,7 @@ func main() {
 
 	router := chi.NewRouter()
 
-	processor := processor.NewRINEXProcessor(5)
+	processor := processor.NewRINEXProcessor(3)
 
 	if flagSQL != "" {
 		sugar.Infof("Initializing PostrgeSQL storage with DSN: %s", flagSQL)
@@ -71,6 +71,9 @@ func main() {
 	router.Group(func(r chi.Router) {
 		r.Use(middlewareservice.AuthMiddleware(dbStorage, sugar))
 		r.Post("/api/user/observation", handlers.UploadFileHandler(dbStorage, processor, sugar))
+		r.Get("/api/user/result/{resultID}", handlers.GetResultHandler(dbStorage, sugar))
+		r.Get("/api/user/last", handlers.GetLastResultHandler(dbStorage, sugar))
+		r.Get("/api/user/history", handlers.GetUserResultsHandler(dbStorage, sugar))
 	})
 
 	sugar.Infof("Running server on %s", flagRunAddr)

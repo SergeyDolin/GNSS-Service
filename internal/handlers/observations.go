@@ -215,7 +215,7 @@ func GetLastResultHandler(
 	}
 }
 
-func GetHistoryHandler(
+func GetUserResultsHandler(
 	dbStorage *storage.DBStorage,
 	logger *zap.SugaredLogger,
 ) http.HandlerFunc {
@@ -227,18 +227,21 @@ func GetHistoryHandler(
 
 		userLogin, ok := middlewareservice.GetUserLogin(r.Context())
 		if !ok {
+			logger.Error("GetUserResultsHandler: user login not found in context")
 			sendJSONError(w, "Unauthorized", http.StatusUnauthorized, logger)
 			return
 		}
 
-		files, err := dbStorage.GetUserFiles(userLogin)
+		logger.Infof("GetUserResultsHandler: fetching results for user: %s", userLogin)
+
+		results, err := dbStorage.GetUserResults(userLogin)
 		if err != nil {
-			logger.Errorf("Failed to get user files: %v", err)
-			sendJSONError(w, "Failed to get history", http.StatusInternalServerError, logger)
+			logger.Errorf("Failed to get user results: %v", err)
+			sendJSONError(w, "Failed to get results", http.StatusInternalServerError, logger)
 			return
 		}
 
-		sendJSONResponse(w, http.StatusOK, files, logger)
+		sendJSONResponse(w, http.StatusOK, results, logger)
 	}
 }
 

@@ -3,7 +3,6 @@ package storage
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -17,7 +16,6 @@ type User struct {
 
 type DBStorage struct {
 	conn *pgx.Conn
-	mu   sync.RWMutex
 }
 
 type ObsFile struct {
@@ -113,9 +111,6 @@ func (s *DBStorage) initSchema() error {
 }
 
 func (s *DBStorage) CreateUser(login, password string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	query := `INSERT INTO users (login, password) VALUES ($1, $2) ON CONFLICT (login) DO NOTHING`
 	_, err := s.conn.Exec(context.Background(), query, login, password)
 	if err != nil {
@@ -139,8 +134,6 @@ func (s *DBStorage) GetUser(login string) (*User, error) {
 }
 
 func (s *DBStorage) UserExists(login string) (bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	query := `SELECT EXISTS(SELECT 1 FROM users WHERE login = $1)`
 	var exists bool
 	err := s.conn.QueryRow(context.Background(), query, login).Scan(&exists)
@@ -148,8 +141,6 @@ func (s *DBStorage) UserExists(login string) (bool, error) {
 }
 
 func (s *DBStorage) CreateFile(userLogin, filename string, fileSize int64) (*ObsFile, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	query := `
 		INSERT INTO observation_files (user_login, filename, file_size, uploaded_at, status)
 		VALUES ($1, $2, $3, $4, $5)
@@ -180,8 +171,6 @@ func (s *DBStorage) CreateFile(userLogin, filename string, fileSize int64) (*Obs
 }
 
 func (s *DBStorage) GetFile(fileID int64) (*ObsFile, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	query := `
 		SELECT id, user_login, filename, file_size, uploaded_at, status, result_id
 		FROM observation_files
@@ -207,8 +196,6 @@ func (s *DBStorage) GetFile(fileID int64) (*ObsFile, error) {
 }
 
 func (s *DBStorage) GetUserFiles(userLogin string) ([]*ObsFile, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	query := `
 		SELECT id, user_login, filename, file_size, uploaded_at, status, result_id
 		FROM observation_files
@@ -244,8 +231,6 @@ func (s *DBStorage) GetUserFiles(userLogin string) ([]*ObsFile, error) {
 }
 
 func (s *DBStorage) UpdateFileStatus(fileID int64, status string, resultID *int64) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	query := `
 		UPDATE observation_files
 		SET status = $2, result_id = $3
@@ -261,8 +246,6 @@ func (s *DBStorage) UpdateFileStatus(fileID int64, status string, resultID *int6
 }
 
 func (s *DBStorage) SaveResult(result *AdjustmentResult) (int64, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	query := `
 		INSERT INTO adjustment_results (file_id, user_login, x, y, z, sdx, sdy, sdz, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -292,8 +275,6 @@ func (s *DBStorage) SaveResult(result *AdjustmentResult) (int64, error) {
 }
 
 func (s *DBStorage) GetResult(resultID int64) (*AdjustmentResult, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	query := `
 		SELECT id, file_id, user_login, x, y, z, sdx, sdy, sdz, created_at
 		FROM adjustment_results
@@ -321,9 +302,45 @@ func (s *DBStorage) GetResult(resultID int64) (*AdjustmentResult, error) {
 	return &r, nil
 }
 
+func (s *DBStorage) GetUserResults(userLogin string) ([]*AdjustmentResult, error) {
+	query := `
+		SELECT id, file_id, user_login, x, y, z, sdx, sdy, sdz, created_at
+		FROM adjustment_results
+		WHERE user_login = $1
+		ORDER BY created_at DESC
+	`
+
+	rows, err := s.conn.Query(context.Background(), query, userLogin)
+	if err != nil {
+		return nil, fmt.Errorf("get user results: %w", err)
+	}
+	defer rows.Close()
+
+	var results []*AdjustmentResult
+	for rows.Next() {
+		var r AdjustmentResult
+		err := rows.Scan(
+			&r.ID,
+			&r.FileID,
+			&r.UserLogin,
+			&r.X,
+			&r.Y,
+			&r.Z,
+			&r.SDX,
+			&r.SDY,
+			&r.SDZ,
+			&r.CreatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("scan result: %w", err)
+		}
+		results = append(results, &r)
+	}
+
+	return results, nil
+}
+
 func (s *DBStorage) GetLastUserResult(userLogin string) (*AdjustmentResult, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	query := `
 		SELECT id, file_id, user_login, x, y, z, sdx, sdy, sdz, created_at
 		FROM adjustment_results
@@ -352,23 +369,6 @@ func (s *DBStorage) GetLastUserResult(userLogin string) (*AdjustmentResult, erro
 
 	return &r, nil
 }
-
-// func (s *DBStorage) UpdateUserPassword(login, newPassword string) error {
-// 	s.mu.Lock()
-// 	defer s.mu.Unlock()
-
-// 	query := `UPDATE users SET password = $2 WHERE login = $1`
-// 	_, err := s.conn.Exec(context.Background(), query, login, newPassword)
-// 	if err != nil {
-// 		return fmt.Errorf("update user password %s: %w", login, err)
-// 	}
-
-// 	if user, exists := s.users[login]; exists {
-// 		user.password = newPassword
-// 	}
-
-// 	return nil
-// }
 
 func (s *DBStorage) Close() error {
 	return s.conn.Close(context.Background())
