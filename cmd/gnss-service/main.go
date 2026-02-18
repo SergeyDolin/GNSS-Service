@@ -1,7 +1,9 @@
 package main
 
 import (
+	"gnss-service/cmd/rtklib/processor"
 	"gnss-service/internal/handlers"
+	middlewareservice "gnss-service/internal/middleware-service"
 	"gnss-service/internal/storage"
 	"net/http"
 
@@ -28,9 +30,14 @@ func main() {
 		logger.Fatal("cannot initialize zap")
 	}
 	defer logger.Sync()
+
 	sugar := logger.Sugar()
+
 	var dbStorage *storage.DBStorage
+
 	router := chi.NewRouter()
+
+	processor := processor.NewRINEXProcessor(5)
 
 	if flagSQL != "" {
 		sugar.Infof("Initializing PostrgeSQL storage with DSN: %s", flagSQL)
@@ -46,7 +53,7 @@ func main() {
 		}()
 	}
 	router.Use(middleware.StripSlashes)
-	router.Use(logMiddleware(sugar))
+	router.Use(middlewareservice.LogMiddleware(sugar))
 	router.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	})
@@ -54,8 +61,17 @@ func main() {
 		http.Error(w, "Invalid path format", http.StatusNotFound)
 	})
 
-	router.Get("/", handlers.IndexHandler)
-	router.Post("/api/user/register", handlers.RegisterHandler(dbStorage, sugar))
+	//Public route
+	router.Group(func(r chi.Router) {
+		r.Get("/", handlers.IndexHandler)
+		r.Post("/api/user/register", handlers.RegisterHandler(dbStorage, sugar))
+		r.Post("/api/user/login", handlers.LoginHandler(dbStorage, sugar))
+	})
+
+	router.Group(func(r chi.Router) {
+		r.Use(middlewareservice.AuthMiddleware(dbStorage, sugar))
+		r.Post("/api/user/observation", handlers.UploadFileHandler(dbStorage, processor, sugar))
+	})
 
 	sugar.Infof("Running server on %s", flagRunAddr)
 	sugar.Fatal(http.ListenAndServe(flagRunAddr, router))
