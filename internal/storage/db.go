@@ -370,6 +370,10 @@ func (s *DBStorage) GetLastUserResult(userLogin string) (*AdjustmentResult, erro
 	return &r, nil
 }
 
+func (s *DBStorage) GetConn() *pgx.Conn {
+	return s.conn
+}
+
 func (s *DBStorage) Close() error {
 	return s.conn.Close(context.Background())
 }
