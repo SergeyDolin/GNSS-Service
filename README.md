@@ -2,7 +2,6 @@
 
 Репозиторий индивидуального дипломного проекта курса «Go-разработчик»
 
-```markdown
 # GNSS Service
 
 Сервис для обработки GNSS наблюдений (RINEX файлов) с использованием RTKLIB. Автоматически определяет дату наблюдений, скачивает соответствующие эфемериды с IGS сервера и выполняет постобработку для определения координат.
@@ -301,23 +300,6 @@ Authorization: Basic base64(login:password)
 8. **Сохранение** - результат сохраняется в БД
 9. **Очистка** - удаление всех временных файлов
 
-## ⚙️ Конфигурация RTKLIB
-
-Файл `cmd/rtklib/app/single.conf`:
-
-```ini
-pos1-posmode      = single     # Режим single-point positioning
-pos1-frequency    = 1          # Только L1
-pos1-soltype      = forward    # Прямой ход
-pos1-elmask       = 15         # Маска угла 15 градусов
-pos1-ionoopt      = broadcast  # Ионосфера из broadcast модели
-pos1-tropopt      = saas       # Тропосфера Saastamoinen
-pos1-sateph       = broadcast  # Broadcast эфемериды
-out-solformat     = xyz        # Вывод в XYZ координатах
-out-timesys       = gpst       # Время GPS
-out-timeform      = hms        # Формат времени
-```
-
 ## 🧪 Тестирование
 
 ### Подготовка тестовой базы данных
@@ -361,23 +343,23 @@ make lint
 GNSS-Service/
 ├── cmd/
 │   ├── gnss-service/
-│   │   └── main.go                    # Точка входа в приложение
+│   │   ├── flags.go  
+│   │   └── main.go                     # Точка входа в приложение
 │   └── rtklib/
+│   │   ├── processor/
+│   │   │   └── processor.go            # Обработка RINEX файлов
 │       └── app/
 │           ├── rnx2rtkp                # Исполняемый файл RTKLIB
-│           └── single.conf              # Конфигурация RTKLIB
+│           └── single.conf             # Конфигурация RTKLIB
+├── example/
+│   ├── GEOP195K.obs
 ├── internal/
 │   ├── handlers/
 │   │   ├── auth.go                      # Хендлеры аутентификации
 │   │   ├── index.go                      # Главная страница
-│   │   ├── observations.go               # Хендлеры для файлов и результатов
-│   │   └── upload.go                      # Хендлер загрузки файлов
+│   │   └── observations.go               # Хендлеры для файлов и результатов
 │   ├── middleware-service/
 │   │   └── middlewareservice.go          # Middleware (логирование, аутентификация)
-│   ├── pgerrors/
-│   │   └── pgerrors.go                    # Классификация ошибок PostgreSQL
-│   ├── processor/
-│   │   └── processor.go                    # Обработка RINEX файлов
 │   └── storage/
 │       └── db.go                            # Работа с PostgreSQL
 ├── tmp/                                      # Временные файлы
@@ -482,4 +464,3 @@ curl -X GET http://localhost:8080/api/user/history -H "$AUTH"
 ---
 
 **Happy GNSS Processing!** 🌍🛰️
-```
