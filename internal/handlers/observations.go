@@ -4,13 +4,14 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"gnss-service/cmd/rtklib/processor"
+	"gnss-service/internal/interfaces"
 	middlewareservice "gnss-service/internal/middleware-service"
-	"gnss-service/internal/storage"
 
 	"go.uber.org/zap"
 )
@@ -40,7 +41,7 @@ type FileStatusResponse struct {
 }
 
 func UploadFileHandler(
-	dbStorage *storage.DBStorage,
+	storage interfaces.Storage,
 	processor *processor.RINEXProcessor,
 	logger *zap.SugaredLogger,
 ) http.HandlerFunc {
@@ -76,20 +77,41 @@ func UploadFileHandler(
 			return
 		}
 
-		fileData, err := io.ReadAll(file)
+		tempFile, err := os.CreateTemp("", "upload-*.rnx")
 		if err != nil {
-			sendJSONError(w, "Failed to read file", http.StatusInternalServerError, logger)
+			logger.Errorf("Failed to create temp file: %v", err)
+			sendJSONError(w, "Failed to create temp file", http.StatusInternalServerError, logger)
+			return
+		}
+		defer func() {
+			tempFile.Close()
+			os.Remove(tempFile.Name())
+		}()
+
+		fileSize, err := io.Copy(tempFile, file)
+		if err != nil {
+			logger.Errorf("Failed to copy file data: %v", err)
+			sendJSONError(w, "Failed to save file", http.StatusInternalServerError, logger)
 			return
 		}
 
-		obsFile, err := dbStorage.CreateFile(userLogin, header.Filename, int64(len(fileData)))
+		obsFile, err := storage.CreateFile(userLogin, header.Filename, fileSize)
 		if err != nil {
 			logger.Errorf("Failed to create file record: %v", err)
 			sendJSONError(w, "Failed to save file info", http.StatusInternalServerError, logger)
 			return
 		}
 
-		go processor.ProcessFile(obsFile.ID, userLogin, fileData, dbStorage, logger)
+		go func(fileID int64, userLogin string, tempFileName string, storage interfaces.Storage, logger *zap.SugaredLogger) {
+			fileData, err := os.ReadFile(tempFileName)
+			if err != nil {
+				logger.Errorf("Failed to read temp file for processing: %v", err)
+				storage.UpdateFileStatus(fileID, "failed", nil)
+				return
+			}
+
+			processor.ProcessFile(fileID, userLogin, fileData, storage, logger)
+		}(obsFile.ID, userLogin, tempFile.Name(), storage, logger)
 
 		response := UploadResponse{
 			Message:    "File uploaded and queued for processing",
@@ -105,7 +127,7 @@ func UploadFileHandler(
 }
 
 func GetFileStatusHandler(
-	dbStorage *storage.DBStorage,
+	dbStorage interfaces.Storage,
 	logger *zap.SugaredLogger,
 ) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -152,7 +174,7 @@ func GetFileStatusHandler(
 }
 
 func GetResultHandler(
-	dbStorage *storage.DBStorage,
+	dbStorage interfaces.Storage,
 	logger *zap.SugaredLogger,
 ) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -190,7 +212,7 @@ func GetResultHandler(
 }
 
 func GetLastResultHandler(
-	dbStorage *storage.DBStorage,
+	dbStorage interfaces.Storage,
 	logger *zap.SugaredLogger,
 ) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -216,7 +238,7 @@ func GetLastResultHandler(
 }
 
 func GetUserResultsHandler(
-	dbStorage *storage.DBStorage,
+	dbStorage interfaces.Storage,
 	logger *zap.SugaredLogger,
 ) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

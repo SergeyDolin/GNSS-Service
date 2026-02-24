@@ -74,6 +74,7 @@ func main() {
 		r.Get("/api/user/result/{resultID}", handlers.GetResultHandler(dbStorage, sugar))
 		r.Get("/api/user/last", handlers.GetLastResultHandler(dbStorage, sugar))
 		r.Get("/api/user/history", handlers.GetUserResultsHandler(dbStorage, sugar))
+		r.Get("/api/user/file/{fileID}", handlers.GetFileStatusHandler(dbStorage, sugar))
 	})
 
 	sugar.Infof("Running server on %s", flagRunAddr)

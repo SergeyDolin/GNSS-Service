@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"gnss-service/internal/interfaces"
 	"gnss-service/internal/storage"
 
 	"go.uber.org/zap"
@@ -48,7 +49,7 @@ func (p *RINEXProcessor) ProcessFile(
 	fileID int64,
 	userLogin string,
 	fileData []byte,
-	dbStorage *storage.DBStorage,
+	dbStorage interfaces.Storage,
 	logger *zap.SugaredLogger,
 ) {
 	p.workerPool <- struct{}{}
