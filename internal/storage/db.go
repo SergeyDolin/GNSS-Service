@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
@@ -15,7 +16,7 @@ type User struct {
 }
 
 type DBStorage struct {
-	conn *pgx.Conn
+	pool *pgxpool.Pool
 }
 
 type ObsFile struct {
@@ -42,17 +43,21 @@ type AdjustmentResult struct {
 }
 
 func NewDBStorage(dsn string) (*DBStorage, error) {
-	conn, err := pgx.Connect(context.Background(), dsn)
+	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
 		return nil, fmt.Errorf("Failed to connect to DB: %w", err)
 	}
 
+	if err := pool.Ping(context.Background()); err != nil {
+		return nil, fmt.Errorf("failed to ping DB: %w", err)
+	}
+
 	s := &DBStorage{
-		conn: conn,
+		pool: pool,
 	}
 
 	if err := s.initSchema(); err != nil {
-		conn.Close(context.Background())
+		pool.Close()
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
 
@@ -60,7 +65,7 @@ func NewDBStorage(dsn string) (*DBStorage, error) {
 }
 
 func (s *DBStorage) initSchema() error {
-	_, err := s.conn.Exec(context.Background(), `
+	_, err := s.pool.Exec(context.Background(), `
 	CREATE TABLE IF NOT EXISTS users (
 		login VARCHAR(255) PRIMARY KEY,
 		password VARCHAR(255) NOT NULL
@@ -70,7 +75,7 @@ func (s *DBStorage) initSchema() error {
 		return fmt.Errorf("Create users table: %w", err)
 	}
 
-	_, err = s.conn.Exec(context.Background(), `
+	_, err = s.pool.Exec(context.Background(), `
 	CREATE TABLE IF NOT EXISTS observation_files (
 		id SERIAL PRIMARY KEY,
 		user_login VARCHAR(255) NOT NULL REFERENCES users(login) ON DELETE CASCADE,
@@ -87,7 +92,7 @@ func (s *DBStorage) initSchema() error {
 		return fmt.Errorf("create files table: %w", err)
 	}
 
-	_, err = s.conn.Exec(context.Background(), `
+	_, err = s.pool.Exec(context.Background(), `
 	CREATE TABLE IF NOT EXISTS adjustment_results (
 		id SERIAL PRIMARY KEY,
 		file_id INTEGER NOT NULL REFERENCES observation_files(id) ON DELETE CASCADE,
@@ -112,7 +117,7 @@ func (s *DBStorage) initSchema() error {
 
 func (s *DBStorage) CreateUser(login, password string) error {
 	query := `INSERT INTO users (login, password) VALUES ($1, $2) ON CONFLICT (login) DO NOTHING`
-	_, err := s.conn.Exec(context.Background(), query, login, password)
+	_, err := s.pool.Exec(context.Background(), query, login, password)
 	if err != nil {
 		return fmt.Errorf("create user %s: %w", login, err)
 	}
@@ -123,7 +128,7 @@ func (s *DBStorage) CreateUser(login, password string) error {
 func (s *DBStorage) GetUser(login string) (*User, error) {
 	query := `SELECT login, password FROM users WHERE login = $1`
 	var user User
-	err := s.conn.QueryRow(context.Background(), query, login).Scan(&user.Login, &user.Password)
+	err := s.pool.QueryRow(context.Background(), query, login).Scan(&user.Login, &user.Password)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, fmt.Errorf("user %s not found", login)
@@ -136,7 +141,7 @@ func (s *DBStorage) GetUser(login string) (*User, error) {
 func (s *DBStorage) UserExists(login string) (bool, error) {
 	query := `SELECT EXISTS(SELECT 1 FROM users WHERE login = $1)`
 	var exists bool
-	err := s.conn.QueryRow(context.Background(), query, login).Scan(&exists)
+	err := s.pool.QueryRow(context.Background(), query, login).Scan(&exists)
 	return exists, err
 }
 
@@ -153,7 +158,7 @@ func (s *DBStorage) CreateFile(userLogin, filename string, fileSize int64) (*Obs
 	file.FileSize = fileSize
 	file.Status = "pending"
 
-	err := s.conn.QueryRow(
+	err := s.pool.QueryRow(
 		context.Background(),
 		query,
 		file.UserLogin,
@@ -178,7 +183,7 @@ func (s *DBStorage) GetFile(fileID int64) (*ObsFile, error) {
 	`
 
 	var file ObsFile
-	err := s.conn.QueryRow(context.Background(), query, fileID).Scan(
+	err := s.pool.QueryRow(context.Background(), query, fileID).Scan(
 		&file.ID,
 		&file.UserLogin,
 		&file.Filename,
@@ -203,7 +208,7 @@ func (s *DBStorage) GetUserFiles(userLogin string) ([]*ObsFile, error) {
 		ORDER BY uploaded_at DESC
 	`
 
-	rows, err := s.conn.Query(context.Background(), query, userLogin)
+	rows, err := s.pool.Query(context.Background(), query, userLogin)
 	if err != nil {
 		return nil, fmt.Errorf("get user files: %w", err)
 	}
@@ -237,7 +242,7 @@ func (s *DBStorage) UpdateFileStatus(fileID int64, status string, resultID *int6
 		WHERE id = $1
 	`
 
-	_, err := s.conn.Exec(context.Background(), query, fileID, status, resultID)
+	_, err := s.pool.Exec(context.Background(), query, fileID, status, resultID)
 	if err != nil {
 		return fmt.Errorf("update file status: %w", err)
 	}
@@ -253,7 +258,7 @@ func (s *DBStorage) SaveResult(result *AdjustmentResult) (int64, error) {
 	`
 
 	var id int64
-	err := s.conn.QueryRow(
+	err := s.pool.QueryRow(
 		context.Background(),
 		query,
 		result.FileID,
@@ -282,7 +287,7 @@ func (s *DBStorage) GetResult(resultID int64) (*AdjustmentResult, error) {
 	`
 
 	var r AdjustmentResult
-	err := s.conn.QueryRow(context.Background(), query, resultID).Scan(
+	err := s.pool.QueryRow(context.Background(), query, resultID).Scan(
 		&r.ID,
 		&r.FileID,
 		&r.UserLogin,
@@ -310,7 +315,7 @@ func (s *DBStorage) GetUserResults(userLogin string) ([]*AdjustmentResult, error
 		ORDER BY created_at DESC
 	`
 
-	rows, err := s.conn.Query(context.Background(), query, userLogin)
+	rows, err := s.pool.Query(context.Background(), query, userLogin)
 	if err != nil {
 		return nil, fmt.Errorf("get user results: %w", err)
 	}
@@ -350,7 +355,7 @@ func (s *DBStorage) GetLastUserResult(userLogin string) (*AdjustmentResult, erro
 	`
 
 	var r AdjustmentResult
-	err := s.conn.QueryRow(context.Background(), query, userLogin).Scan(
+	err := s.pool.QueryRow(context.Background(), query, userLogin).Scan(
 		&r.ID,
 		&r.FileID,
 		&r.UserLogin,
@@ -370,10 +375,7 @@ func (s *DBStorage) GetLastUserResult(userLogin string) (*AdjustmentResult, erro
 	return &r, nil
 }
 
-func (s *DBStorage) GetConn() *pgx.Conn {
-	return s.conn
-}
-
 func (s *DBStorage) Close() error {
-	return s.conn.Close(context.Background())
+	s.pool.Close()
+	return nil
 }
